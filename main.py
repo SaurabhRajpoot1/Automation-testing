@@ -1,40 +1,34 @@
-import os
+from fastapi import FastAPI, Request, Header, HTTPException
 import requests
-from fastapi import FastAPI, Request
-from requests.auth import HTTPBasicAuth
+import os
+
 app = FastAPI()
 
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
-@app.get("/files")
-async def list_files():
-    files = os.listdir("downloads") if os.path.exists("downloads") else []
-    return {"files": files}
+CMS_UPLOAD_URL = "https://ig.gov-cloud.ai/mobius-content-service/v1.0/content/upload?filePath=cms_pipeline"
+CMS_TOKEN = os.getenv("CMS_TOKEN")
+
+
 @app.post("/jira-webhook")
-async def jira_webhook(request: Request):
+async def jira_webhook(
+    request: Request,
+    authorization: str = Header(None)
+):
     try:
         data = await request.json()
     except Exception:
-        body = await request.body()
-        print("Invalid JSON received:", body)
-        return {"status": "ignored - invalid json"}
+        raise HTTPException(status_code=400, detail="Invalid JSON from Jira")
 
-    print("Received Jira Event")
-
-    # ✅ Optional: filter only AI Testing status
+    # Optional: process only when status = AI Testing
     status = data.get("fields", {}).get("status", {}).get("name")
     if status != "AI Testing":
-        return {"status": f"ignored - status is {status}"}
-
-    # ✅ Ensure directory exists (fix for Render error)
-    os.makedirs("downloads", exist_ok=True)
+        return {"status": "ignored"}
 
     attachments = data.get("fields", {}).get("attachment", [])
 
-    if not attachments:
-        print("No attachments found")
-        return {"status": "no attachments"}
+    uploaded_files = []
 
     for att in attachments:
         url = att.get("content")
@@ -43,29 +37,45 @@ async def jira_webhook(request: Request):
         if not url or not filename:
             continue
 
-        print(f"Downloading: {filename}")
+        # Step 1: Stream download from Jira
+        jira_response = requests.get(
+            url,
+            auth=(JIRA_EMAIL, JIRA_API_TOKEN),
+            stream=True
+        )
 
-        try:
-            response = requests.get(
-                url,
-                auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
-                stream=True,
-                timeout=20
-            )
+        if jira_response.status_code != 200:
+            uploaded_files.append({
+                "file": filename,
+                "error": "Failed to download from Jira"
+            })
+            continue
 
-            if response.status_code == 200:
-                file_path = f"downloads/{filename}"
+        # Step 2: Direct upload to CMS (NO local file)
+        files = {
+            "file": (filename, jira_response.raw)
+        }
 
-                with open(file_path, "wb") as f:
-                    for chunk in response.iter_content(1024):
-                        f.write(chunk)
+        headers = {
+            "Authorization": f"Bearer {CMS_TOKEN}"
+        }
 
-                size = os.path.getsize(file_path)
-                print(f"Saved: {filename} ({size} bytes)")
-            else:
-                print(f"Failed: {filename}, status={response.status_code}")
+        cms_response = requests.post(
+            CMS_UPLOAD_URL,
+            headers=headers,
+            files=files
+        )
 
-        except Exception as e:
-            print(f"Error downloading {filename}: {e}")
+        if cms_response.status_code == 200:
+            uploaded_files.append(cms_response.json())
+        else:
+            uploaded_files.append({
+                "file": filename,
+                "error": cms_response.text
+            })
 
-    return {"status": "processed"}
+    return {
+        "status": "processed",
+        "uploaded_count": len(uploaded_files),
+        "results": uploaded_files
+    }
