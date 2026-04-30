@@ -1,23 +1,31 @@
+import os
+import requests
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-import uvicorn
 
 app = FastAPI()
+
+JIRA_EMAIL = os.getenv("JIRA_EMAIL")
+JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
 @app.post("/jira-webhook")
 async def jira_webhook(request: Request):
     data = await request.json()
 
-    # Log everything (very important for debugging Jira payloads)
-    print("Received Jira Event:")
-    print(data)
+    attachments = data.get("fields", {}).get("attachment", [])
 
-    return JSONResponse({
-        "status": "success",
-        "message": "Webhook received",
-        "received_keys": list(data.keys())
-    })
+    for att in attachments:
+        url = att["content"]
+        filename = att["filename"]
 
+        response = requests.get(
+            url,
+            auth=(JIRA_EMAIL, JIRA_API_TOKEN),
+            stream=True
+        )
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        if response.status_code == 200:
+            with open(f"downloads/{filename}", "wb") as f:
+                for chunk in response.iter_content(1024):
+                    f.write(chunk)
+
+    return {"status": "done"}
