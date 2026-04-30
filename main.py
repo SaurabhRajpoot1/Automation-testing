@@ -10,7 +10,33 @@ JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 CMS_UPLOAD_URL = "https://ig.gov-cloud.ai/mobius-content-service/v1.0/content/upload?filePath=cms_pipeline"
 CMS_TOKEN = os.getenv("CMS_TOKEN")
 
+@app.post("/upload-to-cms")
+async def upload_to_cms(file: UploadFile = File(...)):
+    try:
+        file_content = await file.read()
 
+        files = {
+            "file": (file.filename, file_content, file.content_type)
+        }
+
+        headers = {
+            "Authorization": f"Bearer {CMS_TOKEN}"
+        }
+
+        response = requests.post(
+            CMS_UPLOAD_URL,
+            headers=headers,
+            files=files,
+            timeout=10
+        )
+
+        return {
+            "cms_status_code": response.status_code,
+            "cms_response": response.text
+        }
+
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=str(e))
 @app.post("/jira-webhook")
 async def jira_webhook(request: Request):
     try:
