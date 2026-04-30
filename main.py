@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 import requests
 import os
 
@@ -12,16 +12,13 @@ CMS_TOKEN = os.getenv("CMS_TOKEN")
 
 
 @app.post("/jira-webhook")
-async def jira_webhook(
-    request: Request,
-    authorization: str = Header(None)
-):
+async def jira_webhook(request: Request):
     try:
         data = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON from Jira")
 
-    # Optional: process only when status = AI Testing
+    # Process only when status = AI Testing
     status = data.get("fields", {}).get("status", {}).get("name")
     if status != "AI Testing":
         return {"status": "ignored"}
@@ -51,7 +48,10 @@ async def jira_webhook(
             })
             continue
 
-        # Step 2: Direct upload to CMS (NO local file)
+        # IMPORTANT: avoid corrupted files
+        jira_response.raw.decode_content = True
+
+        # Step 2: Direct upload to CMS
         files = {
             "file": (filename, jira_response.raw)
         }
@@ -65,6 +65,14 @@ async def jira_webhook(
             headers=headers,
             files=files
         )
+
+        # 🔥 PRINT CMS RESPONSE (for debugging)
+        try:
+            print(f"\n📦 CMS Upload Response for {filename}:")
+            print(cms_response.status_code)
+            print(cms_response.text)
+        except Exception as e:
+            print(f"Error printing CMS response: {e}")
 
         if cms_response.status_code == 200:
             uploaded_files.append(cms_response.json())
