@@ -86,33 +86,29 @@ async def upload_to_cloudinary_api(file: UploadFile = File(...)):
 # -------------------------------
 @app.post("/jira-webhook")
 async def jira_webhook(request: Request):
-    print("\n🚀 JIRA WEBHOOK HIT")
+    print("\n🚀 JIRA WEBHOOK HIT", flush=True)
 
     try:
         data = await request.json()
-        print("📦 RAW PAYLOAD RECEIVED")
+        print("📦 RAW PAYLOAD RECEIVED", flush=True)
     except Exception as e:
-        print("❌ Invalid JSON:", str(e))
+        print("❌ Invalid JSON:", str(e), flush=True)
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # ✅ Correct extraction
+    # Extract issue safely
     issue = data.get("issue", {})
     fields = issue.get("fields", {})
 
     issue_key = issue.get("key")
     status = fields.get("status", {}).get("name")
 
-    print(f"✅ Issue Key: {issue_key}")
-    print(f"✅ Status: {status}")
+    print(f"✅ Issue Key: {issue_key}", flush=True)
+    print(f"✅ Status: {status}", flush=True)
 
-    # 🚨 IMPORTANT FIX: handle None safely
-    if not status or status.strip() != "AI Testing":
-        print("⛔ Status not AI Testing, ignoring")
-        return {"status": "ignored"}
+    # ❌ REMOVED STATUS CHECK COMPLETELY
 
     attachments = fields.get("attachment", [])
-
-    print(f"📎 Total attachments: {len(attachments)}")
+    print(f"📎 Total attachments: {len(attachments)}", flush=True)
 
     results = []
 
@@ -120,11 +116,11 @@ async def jira_webhook(request: Request):
         url = att.get("content")
         filename = att.get("filename")
 
-        print(f"\n⬇️ Processing file: {filename}")
-        print(f"🔗 URL: {url}")
+        print(f"\n⬇️ Processing file: {filename}", flush=True)
+        print(f"🔗 URL: {url}", flush=True)
 
         if not url:
-            print("⚠️ No URL found, skipping")
+            print("⚠️ No URL found, skipping", flush=True)
             continue
 
         try:
@@ -137,10 +133,10 @@ async def jira_webhook(request: Request):
                 timeout=20
             )
 
-            print(f"📥 Jira response: {jira_response.status_code}")
+            print(f"📥 Jira response: {jira_response.status_code}", flush=True)
 
             if jira_response.status_code != 200:
-                print("❌ Download failed")
+                print("❌ Download failed", flush=True)
                 results.append({
                     "file": filename,
                     "error": "Download failed"
@@ -148,8 +144,7 @@ async def jira_webhook(request: Request):
                 continue
 
             file_bytes = jira_response.content
-
-            print(f"📦 File size: {len(file_bytes)} bytes")
+            print(f"📦 File size: {len(file_bytes)} bytes", flush=True)
 
             # -------------------------------
             # UPLOAD TO CLOUDINARY
@@ -160,7 +155,7 @@ async def jira_webhook(request: Request):
                 folder="jira-uploads"
             )
 
-            print("☁️ Uploaded to Cloudinary")
+            print("☁️ Uploaded to Cloudinary", flush=True)
 
             results.append({
                 "file": filename,
@@ -169,7 +164,7 @@ async def jira_webhook(request: Request):
             })
 
         except Exception as e:
-            print(f"❌ ERROR processing file: {str(e)}")
+            print(f"❌ ERROR processing file: {str(e)}", flush=True)
             results.append({
                 "file": filename,
                 "error": str(e)
@@ -181,6 +176,6 @@ async def jira_webhook(request: Request):
         "results": results
     }
 
-    print("\n✅ FINAL RESPONSE:", final_response)
+    print("\n✅ FINAL RESPONSE:", final_response, flush=True)
 
     return final_response
