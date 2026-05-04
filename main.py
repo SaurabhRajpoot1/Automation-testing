@@ -1,5 +1,4 @@
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
 import requests
 import os
 import cloudinary
@@ -12,9 +11,6 @@ app = FastAPI()
 # -------------------------------
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
-
-CMS_UPLOAD_URL = "https://ig.gov-cloud.ai/mobius-content-service/v1.0/content/upload?filePath=cms_pipeline"
-CMS_TOKEN = os.getenv("CMS_TOKEN")
 
 # Cloudinary config
 cloudinary.config(
@@ -33,39 +29,7 @@ def health():
 
 
 # -------------------------------
-# CMS TEST ENDPOINT
-# -------------------------------
-@app.post("/upload-to-cms")
-async def upload_to_cms(file: UploadFile = File(...)):
-    try:
-        file_content = await file.read()
-
-        files = {
-            "file": (file.filename, file_content, file.content_type)
-        }
-
-        headers = {
-            "Authorization": f"Bearer {CMS_TOKEN}"
-        }
-
-        response = requests.post(
-            CMS_UPLOAD_URL,
-            headers=headers,
-            files=files,
-            timeout=10
-        )
-
-        return {
-            "cms_status_code": response.status_code,
-            "cms_response": response.text
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# -------------------------------
-# CLOUDINARY FALLBACK
+# CLOUDINARY UPLOAD FUNCTION
 # -------------------------------
 def upload_to_cloudinary(file_bytes, filename):
     result = cloudinary.uploader.upload(
@@ -75,8 +39,28 @@ def upload_to_cloudinary(file_bytes, filename):
     )
     return {
         "url": result.get("secure_url"),
-        "public_id": result.get("public_id")
+        "public_id": result.get("public_id"),
+        "resource_type": result.get("resource_type")
     }
+
+
+# -------------------------------
+# DIRECT UPLOAD ENDPOINT (for testing)
+# -------------------------------
+@app.post("/upload-to-cloudinary")
+async def upload_to_cloudinary_api(file: UploadFile = File(...)):
+    try:
+        file_bytes = await file.read()
+
+        result = upload_to_cloudinary(file_bytes, file.filename)
+
+        return {
+            "message": "Upload successful ✅",
+            "data": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------------------
@@ -89,7 +73,6 @@ async def jira_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON from Jira")
 
-    # ✅ Correct parsing
     issue = data.get("issue", {})
     fields = issue.get("fields", {})
 
@@ -129,39 +112,7 @@ async def jira_webhook(request: Request):
             file_bytes = jira_response.content
 
             # -------------------------------
-            # 2. Try CMS upload
-            # -------------------------------
-            try:
-                files = {
-                    "file": (filename, file_bytes)
-                }
-
-                headers = {
-                    "Authorization": f"Bearer {CMS_TOKEN}"
-                }
-
-                cms_response = requests.post(
-                    CMS_UPLOAD_URL,
-                    headers=headers,
-                    files=files,
-                    timeout=10
-                )
-
-                if cms_response.status_code == 200:
-                    results.append({
-                        "file": filename,
-                        "cms": cms_response.json()
-                    })
-                    continue
-
-                else:
-                    print(f"⚠️ CMS failed: {cms_response.text}")
-
-            except Exception as cms_error:
-                print(f"⚠️ CMS exception: {cms_error}")
-
-            # -------------------------------
-            # 3. Fallback → Cloudinary
+            # 2. Upload to Cloudinary
             # -------------------------------
             cloudinary_result = upload_to_cloudinary(file_bytes, filename)
 
