@@ -90,7 +90,7 @@ async def jira_webhook(request: Request):
 
     try:
         data = await request.json()
-        print("📦 RAW PAYLOAD RECEIVED", flush=True)
+        print("📦 RAW PAYLOAD RECEIVED",data, flush=True)
     except Exception as e:
         print("❌ Invalid JSON:", str(e), flush=True)
         raise HTTPException(status_code=400, detail="Invalid JSON")
