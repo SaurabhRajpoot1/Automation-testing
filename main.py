@@ -3,6 +3,7 @@ import requests
 import os
 import cloudinary
 import cloudinary.uploader
+import json
 
 app = FastAPI()
 
@@ -37,6 +38,7 @@ def upload_to_cloudinary(file_bytes, filename):
         resource_type="auto",
         folder="jira-uploads"
     )
+    print(json.dumps(result))
     return {
         "url": result.get("secure_url"),
         "public_id": result.get("public_id"),
@@ -47,7 +49,7 @@ def upload_to_cloudinary(file_bytes, filename):
 # -------------------------------
 # DIRECT UPLOAD ENDPOINT (for testing)
 # -------------------------------
-@app.post("/upload-to-cloudinary")
+@app.post("/upload-to-cloudinary-new")
 async def upload_to_cloudinary_api(file: UploadFile = File(...)):
     try:
         file_bytes = await file.read()
@@ -127,8 +129,12 @@ async def jira_webhook(request: Request):
                 "error": str(e)
             })
 
-    return {
+    data = {
         "issue": issue_key,
         "processed_files": len(results),
         "results": results
     }
+    
+    print(json.dumps(data))
+
+    return data
