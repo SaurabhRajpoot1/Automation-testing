@@ -2,15 +2,39 @@ from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 import requests
 import os
+import cloudinary
+import cloudinary.uploader
 
 app = FastAPI()
 
+# -------------------------------
+# ENV CONFIG
+# -------------------------------
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
 CMS_UPLOAD_URL = "https://ig.gov-cloud.ai/mobius-content-service/v1.0/content/upload?filePath=cms_pipeline"
 CMS_TOKEN = os.getenv("CMS_TOKEN")
 
+# Cloudinary config
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+)
+
+
+# -------------------------------
+# HEALTH CHECK
+# -------------------------------
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
+
+# -------------------------------
+# CMS TEST ENDPOINT
+# -------------------------------
 @app.post("/upload-to-cms")
 async def upload_to_cms(file: UploadFile = File(...)):
     try:
@@ -36,8 +60,28 @@ async def upload_to_cms(file: UploadFile = File(...)):
             "cms_response": response.text
         }
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# -------------------------------
+# CLOUDINARY FALLBACK
+# -------------------------------
+def upload_to_cloudinary(file_bytes, filename):
+    result = cloudinary.uploader.upload(
+        file_bytes,
+        resource_type="auto",
+        folder="jira-uploads"
+    )
+    return {
+        "url": result.get("secure_url"),
+        "public_id": result.get("public_id")
+    }
+
+
+# -------------------------------
+# JIRA WEBHOOK
+# -------------------------------
 @app.post("/jira-webhook")
 async def jira_webhook(request: Request):
     try:
@@ -45,72 +89,95 @@ async def jira_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON from Jira")
 
-    # Process only when status = AI Testing
-    status = data.get("fields", {}).get("status", {}).get("name")
+    # ✅ Correct parsing
+    issue = data.get("issue", {})
+    fields = issue.get("fields", {})
+
+    status = fields.get("status", {}).get("name")
+    issue_key = issue.get("key")
+
     if status != "AI Testing":
         return {"status": "ignored"}
 
-    attachments = data.get("fields", {}).get("attachment", [])
-
-    uploaded_files = []
+    attachments = fields.get("attachment", [])
+    results = []
 
     for att in attachments:
         url = att.get("content")
         filename = att.get("filename")
 
-        if not url or not filename:
+        if not url:
             continue
 
-        # Step 1: Stream download from Jira
-        jira_response = requests.get(
-            url,
-            auth=(JIRA_EMAIL, JIRA_API_TOKEN),
-            stream=True
-        )
-
-        if jira_response.status_code != 200:
-            uploaded_files.append({
-                "file": filename,
-                "error": "Failed to download from Jira"
-            })
-            continue
-
-        # IMPORTANT: avoid corrupted files
-        jira_response.raw.decode_content = True
-
-        # Step 2: Direct upload to CMS
-        files = {
-            "file": (filename, jira_response.raw)
-        }
-
-        headers = {
-            "Authorization": f"Bearer {CMS_TOKEN}"
-        }
-
-        cms_response = requests.post(
-            CMS_UPLOAD_URL,
-            headers=headers,
-            files=files
-        )
-
-        # 🔥 PRINT CMS RESPONSE (for debugging)
         try:
-            print(f"\n📦 CMS Upload Response for {filename}:")
-            print(cms_response.status_code)
-            print(cms_response.text)
-        except Exception as e:
-            print(f"Error printing CMS response: {e}")
+            # -------------------------------
+            # 1. Download from Jira
+            # -------------------------------
+            jira_response = requests.get(
+                url,
+                auth=(JIRA_EMAIL, JIRA_API_TOKEN),
+                timeout=10
+            )
 
-        if cms_response.status_code == 200:
-            uploaded_files.append(cms_response.json())
-        else:
-            uploaded_files.append({
+            if jira_response.status_code != 200:
+                results.append({
+                    "file": filename,
+                    "error": "Download failed"
+                })
+                continue
+
+            file_bytes = jira_response.content
+
+            # -------------------------------
+            # 2. Try CMS upload
+            # -------------------------------
+            try:
+                files = {
+                    "file": (filename, file_bytes)
+                }
+
+                headers = {
+                    "Authorization": f"Bearer {CMS_TOKEN}"
+                }
+
+                cms_response = requests.post(
+                    CMS_UPLOAD_URL,
+                    headers=headers,
+                    files=files,
+                    timeout=10
+                )
+
+                if cms_response.status_code == 200:
+                    results.append({
+                        "file": filename,
+                        "cms": cms_response.json()
+                    })
+                    continue
+
+                else:
+                    print(f"⚠️ CMS failed: {cms_response.text}")
+
+            except Exception as cms_error:
+                print(f"⚠️ CMS exception: {cms_error}")
+
+            # -------------------------------
+            # 3. Fallback → Cloudinary
+            # -------------------------------
+            cloudinary_result = upload_to_cloudinary(file_bytes, filename)
+
+            results.append({
                 "file": filename,
-                "error": cms_response.text
+                "cloudinary": cloudinary_result
+            })
+
+        except Exception as e:
+            results.append({
+                "file": filename,
+                "error": str(e)
             })
 
     return {
-        "status": "processed",
-        "uploaded_count": len(uploaded_files),
-        "results": uploaded_files
+        "issue": issue_key,
+        "processed_files": len(results),
+        "results": results
     }
