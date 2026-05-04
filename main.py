@@ -86,29 +86,33 @@ async def upload_to_cloudinary_api(file: UploadFile = File(...)):
 # -------------------------------
 @app.post("/jira-webhook")
 async def jira_webhook(request: Request):
-    log("🚀 JIRA WEBHOOK HIT")
+    print("\n🚀 JIRA WEBHOOK HIT")
 
     try:
         data = await request.json()
-        log("Received Jira payload", data)
+        print("📦 RAW PAYLOAD RECEIVED")
     except Exception as e:
-        log("Invalid JSON", str(e))
+        print("❌ Invalid JSON:", str(e))
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    # ✅ Correct extraction
     issue = data.get("issue", {})
     fields = issue.get("fields", {})
 
-    status = fields.get("status", {}).get("name")
     issue_key = issue.get("key")
+    status = fields.get("status", {}).get("name")
 
-    log("Parsed issue", {"issue_key": issue_key, "status": status})
+    print(f"✅ Issue Key: {issue_key}")
+    print(f"✅ Status: {status}")
 
-    if status != "AI Testing":
-        log("Status not AI Testing, ignoring")
+    # 🚨 IMPORTANT FIX: handle None safely
+    if not status or status.strip() != "AI Testing":
+        print("⛔ Status not AI Testing, ignoring")
         return {"status": "ignored"}
 
     attachments = fields.get("attachment", [])
-    log("Attachments found", attachments)
+
+    print(f"📎 Total attachments: {len(attachments)}")
 
     results = []
 
@@ -116,62 +120,67 @@ async def jira_webhook(request: Request):
         url = att.get("content")
         filename = att.get("filename")
 
-        log("Processing attachment", {"filename": filename, "url": url})
+        print(f"\n⬇️ Processing file: {filename}")
+        print(f"🔗 URL: {url}")
 
         if not url:
+            print("⚠️ No URL found, skipping")
             continue
 
         try:
             # -------------------------------
-            # Download from Jira
+            # DOWNLOAD FROM JIRA
             # -------------------------------
             jira_response = requests.get(
                 url,
-                auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
-                headers={"Accept": "application/octet-stream"},
-                timeout=10
+                auth=(JIRA_EMAIL, JIRA_API_TOKEN),
+                timeout=20
             )
 
-            log("Jira response", {
-                "status": jira_response.status_code,
-                "content_type": jira_response.headers.get("Content-Type"),
-                "size": len(jira_response.content)
-            })
+            print(f"📥 Jira response: {jira_response.status_code}")
 
             if jira_response.status_code != 200:
-                results.append({"file": filename, "error": "Download failed"})
+                print("❌ Download failed")
+                results.append({
+                    "file": filename,
+                    "error": "Download failed"
+                })
                 continue
 
             file_bytes = jira_response.content
 
-            if len(file_bytes) < 100:
-                log("⚠️ File too small, likely auth issue")
-                results.append({"file": filename, "error": "Invalid file"})
-                continue
+            print(f"📦 File size: {len(file_bytes)} bytes")
 
             # -------------------------------
-            # Upload to Cloudinary
+            # UPLOAD TO CLOUDINARY
             # -------------------------------
-            cloudinary_result = upload_to_cloudinary(file_bytes, filename)
+            upload_result = cloudinary.uploader.upload(
+                file_bytes,
+                resource_type="auto",
+                folder="jira-uploads"
+            )
+
+            print("☁️ Uploaded to Cloudinary")
 
             results.append({
                 "file": filename,
-                "cloudinary": cloudinary_result
+                "url": upload_result.get("secure_url"),
+                "public_id": upload_result.get("public_id")
             })
 
         except Exception as e:
-            log("Error processing file", str(e))
+            print(f"❌ ERROR processing file: {str(e)}")
             results.append({
                 "file": filename,
                 "error": str(e)
             })
 
-    final_data = {
+    final_response = {
         "issue": issue_key,
         "processed_files": len(results),
         "results": results
     }
 
-    log("Final response", final_data)
+    print("\n✅ FINAL RESPONSE:", final_response)
 
-    return final_data
+    return final_response
