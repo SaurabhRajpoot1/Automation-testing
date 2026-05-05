@@ -89,28 +89,28 @@ async def jira_webhook(request: Request):
     print("\n🚀 JIRA WEBHOOK HIT", flush=True)
 
     try:
-        data = await request.json()
-        print("📦 RAW PAYLOAD RECEIVED",data, flush=True)
+        raw_body = await request.body()
+        print("📦 RAW BODY:", raw_body.decode("utf-8"), flush=True)
+
+        data = json.loads(raw_body)
+
     except Exception as e:
-        print("❌ Invalid JSON:", str(e), flush=True)
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        print("❌ JSON PARSE ERROR:", str(e), flush=True)
+        return {"error": "invalid json"}
 
-    # ✅ HANDLE BOTH CASES
-    if "issue" in data:
-        issue = data.get("issue", {})
-    else:
-        issue = data  # <-- fallback (your case)
-
+    # ✅ clean parsing
+    issue = data.get("issue") or data
     fields = issue.get("fields", {})
 
     issue_key = issue.get("key")
     status = fields.get("status", {}).get("name")
 
-    print(f"✅ Issue Key: {issue_key}", flush=True)
-    print(f"✅ Status: {status}", flush=True)
-
     attachments = fields.get("attachment", [])
-    print(f"📎 Total attachments: {len(attachments)}", flush=True)
+    comments = fields.get("comment", {}).get("comments", [])
+
+    print(f"✅ Issue: {issue_key}", flush=True)
+    print(f"📎 Attachments: {len(attachments)}", flush=True)
+    print(f"💬 Comments: {len(comments)}", flush=True)
 
     results = []
 
