@@ -66,56 +66,42 @@ def upload_to_cloudinary(file_bytes, filename):
 # -------------------------------
 # TEST ENDPOINT
 # -------------------------------
-@app.post("/upload-to-cloudinary-new")
-async def upload_to_cloudinary_api(file: UploadFile = File(...)):
-    log("Direct upload endpoint hit")
-
-    try:
-        file_bytes = await file.read()
-        result = upload_to_cloudinary(file_bytes, file.filename)
-
-        return {"message": "Upload successful", "data": result}
-
-    except Exception as e:
-        log("Direct upload error", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# -------------------------------
-# JIRA WEBHOOK
-# -------------------------------
 @app.post("/jira-webhook")
 async def jira_webhook(request: Request):
     print("\n🚀 JIRA WEBHOOK HIT", flush=True)
 
     try:
         raw_body = await request.body()
-        print("📦 RAW BODY:", raw_body.decode("utf-8"), flush=True)
+        body_str = raw_body.decode("utf-8")
+        print("📦 RAW BODY:", body_str, flush=True)
 
-        data = json.loads(raw_body)
+        data = json.loads(body_str)
 
     except Exception as e:
         print("❌ JSON PARSE ERROR:", str(e), flush=True)
         return {"error": "invalid json"}
 
-    # ✅ clean parsing
-    issue = data.get("issue") or data
-    fields = issue.get("fields", {})
+    # ✅ PARSE YOUR CUSTOM PAYLOAD
+    issue_key = data.get("issue_key")
+    status = data.get("status")
+    summary = data.get("summary")
 
-    issue_key = issue.get("key")
-    status = fields.get("status", {}).get("name")
-
-    attachments = fields.get("attachment", [])
-    comments = fields.get("comment", {}).get("comments", [])
+    attachments = data.get("attachments", [])
+    comments = data.get("comments", [])
 
     print(f"✅ Issue: {issue_key}", flush=True)
+    print(f"📌 Status: {status}", flush=True)
+    print(f"📝 Summary: {summary}", flush=True)
     print(f"📎 Attachments: {len(attachments)}", flush=True)
     print(f"💬 Comments: {len(comments)}", flush=True)
 
     results = []
 
+    # -------------------------------
+    # PROCESS ATTACHMENTS
+    # -------------------------------
     for att in attachments:
-        url = att.get("content")
+        url = att.get("url")        # ✅ your payload uses "url"
         filename = att.get("filename")
 
         print(f"\n⬇️ Processing file: {filename}", flush=True)
@@ -143,18 +129,12 @@ async def jira_webhook(request: Request):
 
             file_bytes = jira_response.content
 
-            upload_result = cloudinary.uploader.upload(
-                file_bytes,
-                resource_type="auto",
-                folder="jira-uploads"
-            )
-
-            print("☁️ Uploaded to Cloudinary", flush=True)
+            # ✅ USE YOUR HELPER (cleaner)
+            upload_result = upload_to_cloudinary(file_bytes, filename)
 
             results.append({
                 "file": filename,
-                "url": upload_result.get("secure_url"),
-                "public_id": upload_result.get("public_id")
+                "cloudinary": upload_result
             })
 
         except Exception as e:
@@ -164,10 +144,19 @@ async def jira_webhook(request: Request):
                 "error": str(e)
             })
 
+    # -------------------------------
+    # LOG COMMENTS (optional)
+    # -------------------------------
+    for c in comments:
+        print(f"\n💬 Comment by {c.get('author')}", flush=True)
+        print(f"📝 {c.get('body')}", flush=True)
+
     final_response = {
         "issue": issue_key,
+        "status": status,
         "processed_files": len(results),
-        "results": results
+        "results": results,
+        "comments_received": len(comments)
     }
 
     print("\n✅ FINAL RESPONSE:", final_response, flush=True)
