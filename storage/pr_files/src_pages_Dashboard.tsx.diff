@@ -1,0 +1,49 @@
+@@ -1,4 +1,4 @@
+-import { Plus, ShieldCheck, Users, UserRoundCheck, UserRoundPlus } from 'lucide-react';
++import { Download, Plus, ShieldCheck, Users, UserRoundCheck, UserRoundPlus } from 'lucide-react';
+ import { useEffect, useMemo, useState } from 'react';
+ import { AddUserModal } from '../components/AddUserModal';
+ import { SearchBar } from '../components/SearchBar';
+@@ -160,6 +160,21 @@ export default function Dashboard() {
+     }
+   };
+ 
++  const handleExportCSV = () => {
++    const headers = ['Name,Email,Role,Status'];
++    const csvRows = filteredUsers.map(user => `"${user.name}","${user.email}","${user.role}","${user.status}"`);
++    const csvContent = headers.concat(csvRows).join('\n');
++    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
++    const url = URL.createObjectURL(blob);
++    const link = document.createElement('a');
++    link.href = url;
++    link.setAttribute('download', 'users.csv');
++    document.body.appendChild(link);
++    link.click();
++    document.body.removeChild(link);
++    showToast('Export successful', 'success', 'User list has been exported to CSV.');
++  };
++
+   return (
+     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8" data-testid="dashboard-page">
+       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+@@ -172,10 +187,16 @@ export default function Dashboard() {
+           </h1>
+           <p className="mt-1 text-sm text-slate-500">Monitor user access, roles, and workspace activity.</p>
+         </div>
+-        <button type="button" className="primary-button" onClick={openCreateModal} data-testid="add-user-button">
+-          <Plus aria-hidden="true" size={18} />
+-          Add user
+-        </button>
++        <div className="flex gap-2">
++          <button type="button" className="secondary-button" onClick={handleExportCSV} data-testid="export-csv-button">
++            <Download aria-hidden="true" size={18} />
++            Export CSV
++          </button>
++          <button type="button" className="primary-button" onClick={openCreateModal} data-testid="add-user-button">
++            <Plus aria-hidden="true" size={18} />
++            Add user
++          </button>
++        </div>
+       </div>
+ 
+       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Dashboard stats" data-testid="stats-section">
